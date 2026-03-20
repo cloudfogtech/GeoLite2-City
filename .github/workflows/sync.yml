@@ -1,0 +1,81 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '30 6 * * 2,5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: true
+
+jobs:
+  sync-upstream:
+    name: Sync upstream repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/wp-statistics/GeoLite2-City.git || true
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream master
+
+      - name: Check for updates
+        id: check
+        run: |
+          UPSTREAM_MASTER=$(git rev-parse upstream/master)
+          FORK_MASTER=$(git rev-parse HEAD)
+
+          if git merge-base --is-ancestor "$FORK_MASTER" "$UPSTREAM_MASTER" && [ "$UPSTREAM_MASTER" != "$FORK_MASTER" ]; then
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream: $UPSTREAM_MASTER"
+            echo "Fork: $FORK_MASTER"
+          elif git merge-base --is-ancestor "$UPSTREAM_MASTER" "$FORK_MASTER"; then
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+            echo "Fork already contains upstream changes"
+          else
+            echo "Fork and upstream have diverged"
+            exit 1
+          fi
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          git merge --ff-only upstream/master
+
+      - name: Push synchronized branch
+        if: steps.check.outputs.has_updates == 'true'
+        run: |
+          git push origin HEAD:master
+
+      - name: Write summary
+        run: |
+          if [ "${{ steps.check.outputs.has_updates }}" = "true" ]; then
+            echo "### Upstream synchronized" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Upstream changes were merged from wp-statistics/GeoLite2-City" >> "$GITHUB_STEP_SUMMARY"
+            echo "- The release workflow will run after this workflow completes successfully" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Already up to date" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- No upstream changes were available to merge" >> "$GITHUB_STEP_SUMMARY"
+            echo "- The release workflow can still run manually if needed" >> "$GITHUB_STEP_SUMMARY"
+          fi

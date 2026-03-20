@@ -1,0 +1,88 @@
+name: Release GeoLite2-City.mmdb
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - GeoLite2-City.mmdb.gz
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-geolite2-city-mmdb
+  cancel-in-progress: true
+
+jobs:
+  publish-release:
+    name: Publish release asset
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Ensure compressed database exists
+        run: |
+          if [ ! -f GeoLite2-City.mmdb.gz ]; then
+            echo "GeoLite2-City.mmdb.gz was not found in the repository root"
+            exit 1
+          fi
+
+      - name: Decompress database
+        run: |
+          gunzip -c GeoLite2-City.mmdb.gz > GeoLite2-City.mmdb
+          ls -lh GeoLite2-City.mmdb GeoLite2-City.mmdb.gz
+
+      - name: Generate release metadata
+        id: metadata
+        run: |
+          RELEASE_DATE=$(date -u +'%Y-%m-%d %H:%M UTC')
+          SOURCE_SHA=$(git rev-parse --short HEAD)
+
+          {
+            echo "release_name=GeoLite2-City MMDB (${RELEASE_DATE})"
+            echo "release_tag=latest"
+          } >> "$GITHUB_OUTPUT"
+
+          cat <<EOF > RELEASE_NOTES.md
+          Latest extracted GeoLite2-City database for direct download.
+
+          - Source repository: ${{ github.repository }}
+          - Source commit: ${SOURCE_SHA}
+          - Generated at: ${RELEASE_DATE}
+          - Download URL: https://github.com/${{ github.repository }}/releases/download/latest/GeoLite2-City.mmdb
+          EOF
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.metadata.outputs.release_tag }}" >/dev/null 2>&1; then
+            gh release edit "${{ steps.metadata.outputs.release_tag }}" \
+              --title "${{ steps.metadata.outputs.release_name }}" \
+              --notes-file RELEASE_NOTES.md
+          else
+            gh release create "${{ steps.metadata.outputs.release_tag }}" \
+              --title "${{ steps.metadata.outputs.release_name }}" \
+              --notes-file RELEASE_NOTES.md \
+              --target master \
+              --latest
+          fi
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.metadata.outputs.release_tag }}" GeoLite2-City.mmdb --clobber
+
+      - name: Write summary
+        run: |
+          echo "### Release published" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Asset: GeoLite2-City.mmdb" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: https://github.com/${{ github.repository }}/releases/download/latest/GeoLite2-City.mmdb" >> "$GITHUB_STEP_SUMMARY"
