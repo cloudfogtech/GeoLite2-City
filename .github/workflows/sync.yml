@@ -1,0 +1,73 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '30 6 * * 2,5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Add upstream repo
+        run: |
+          git remote add upstream https://github.com/wp-statistics/GeoLite2-City.git
+
+      - name: Fetch upstream
+        run: |
+          git fetch upstream master
+
+      - name: Check updates
+        id: check
+        run: |
+          LOCAL_HASH=$(git rev-parse HEAD)
+          UPSTREAM_HASH=$(git rev-parse upstream/master)
+          
+          if [ "$LOCAL_HASH" != "$UPSTREAM_HASH" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "Local: $LOCAL_HASH"
+            echo "Upstream: $UPSTREAM_HASH"
+          else
+            echo "has_update=false" >> $GITHUB_OUTPUT
+            echo "Already up to date. Local: $LOCAL_HASH, Upstream: $UPSTREAM_HASH"
+          fi
+
+      - name: Sync master branch
+        if: steps.check.outputs.has_update == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git reset --hard upstream/master
+          git push origin master --force
+
+      - name: Rebase release branch
+        if: steps.check.outputs.has_update == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if git rev-parse release &>/dev/null; then
+            git checkout release
+            git rebase master
+            git push origin release --force
+            echo "rebase release branch master successfully"
+          else
+            echo "release branch is not found, skip rebase"
+          fi
